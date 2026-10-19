@@ -1,0 +1,10 @@
+version: 1
+languages:
+  - cpp
+agents:
+  - codex
+coverage:
+  minimum: 95
+  domain: 100
+architecture: clean
+security: strict
