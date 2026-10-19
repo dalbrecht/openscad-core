@@ -59,4 +59,30 @@ class PreviewTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=4) as pool:
             results = list(pool.map(self.compile, ['cube(1);', 'sphere(2);']*4))
         self.assertTrue(all(result.returncode == 0 for result in results))
+    def test_two_dimensional_preview_fails_explicitly(self):
+        result = self.compile('square(2);')
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('2D preview',result.stderr)
+    def test_out_of_range_transformed_coordinate_is_rejected(self):
+        result = self.compile('translate([1e15,0,0]) cube(1);')
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('out-of-range',result.stderr)
+    def test_triangle_quota(self):
+        result = self.compile('sphere(10,$fn=500);')
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('triangle quota',result.stderr)
+    def test_render_node_remains_upstream_evaluated_geometry(self):
+        result = self.compile('render() difference(){cube(4,center=true);cylinder(h=8,r=1,center=true,$fn=12);}')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(len(json.loads(result.stdout)['leaves']),1)
+    def test_root_and_disable_modifiers_follow_upstream(self):
+        result = self.compile('cube(2); !sphere(1,$fn=8); *cube(100);')
+        self.assertEqual(result.returncode,0,result.stderr)
+        scene = json.loads(result.stdout)
+        self.assertEqual(len(scene['leaves']),1)
+        values = [value for triangle in scene['leaves'][0]['triangles'] for value in triangle]
+        self.assertLessEqual(max(values),1)
+    def test_missing_file_and_usage_return_failure(self):
+        self.assertNotEqual(subprocess.run([WORKER],capture_output=True).returncode,0)
+        self.assertNotEqual(subprocess.run([WORKER,'/missing/native-model.scad'],capture_output=True).returncode,0)
 if __name__ == '__main__': unittest.main()
