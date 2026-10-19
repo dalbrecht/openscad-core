@@ -29,6 +29,10 @@ constexpr size_t maxTriangles = 100000;
 json leaves = json::array(), nodes = json::array();
 size_t triangleCount = 0;
 size_t traversalCount = 0;
+struct DiagnosticState {
+  std::vector<std::string> messages;
+  bool hasError = false;
+};
 int encode(const std::shared_ptr<CSGNode>& node)
 {
   // Count entry, not completed descendants, to bound deep upstream union trees.
@@ -92,12 +96,22 @@ int main(int argc, char **argv)
     text.resize(static_cast<size_t>(input.gcount()));
     if (text.size() > maxSource) throw std::runtime_error("Source exceeds 4 MiB");
     if (text.find('\0') != std::string::npos) throw std::runtime_error("NUL byte in source");
-    std::vector<std::string> diagnostics;
+    DiagnosticState diagnostics;
     set_output_handler(
       [](const Message& message, void *context) {
         std::cerr << message.msg << '\n';
-        auto& messages = *static_cast<std::vector<std::string> *>(context);
-        if (messages.size() < 128) messages.push_back(message.msg.substr(0, 8192));
+        auto& state = *static_cast<DiagnosticState *>(context);
+        state.hasError |= message.group == message_group::Error ||
+                          message.group == message_group::Parser_Error ||
+                          message.group == message_group::Export_Error ||
+                          message.group == message_group::UI_Error;
+        if (state.messages.size() < 128) {
+          size_t length = std::min<size_t>(message.msg.size(), 8192);
+          // A quota must not split a UTF-8 code point in an otherwise valid message.
+          while (length < message.msg.size() && length > 0 &&
+                 (static_cast<unsigned char>(message.msg[length]) & 0xc0) == 0x80) --length;
+          state.messages.push_back(message.msg.substr(0, length));
+        }
       },
       nullptr, &diagnostics);
     PlatformUtils::registerApplicationPath(std::filesystem::absolute(argv[0]).parent_path().string());
@@ -127,13 +141,14 @@ int main(int argc, char **argv)
     json highlights = json::array(), backgrounds = json::array();
     for (const auto& node : evaluator.getHighlightNodes()) highlights.push_back(encode(node));
     for (const auto& node : evaluator.getBackgroundNodes()) backgrounds.push_back(encode(node));
+    if (diagnostics.hasError) throw std::runtime_error("OpenSCAD reported evaluation errors");
     std::cout << json{{"version", 1},
                       {"leaves", leaves},
                       {"nodes", nodes},
                       {"root", rootIndex},
                       {"highlights", highlights},
                       {"backgrounds", backgrounds},
-                      {"diagnostics", diagnostics}}
+                      {"diagnostics", diagnostics.messages}}
                    .dump()
               << '\n';
     return 0;

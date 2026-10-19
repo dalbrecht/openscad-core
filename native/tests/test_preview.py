@@ -107,4 +107,17 @@ class PreviewTests(unittest.TestCase):
         result = self.compile('for(i=[0:9999]) translate([i*2,0,0]) cube(1);')
         self.assertGreater(result.returncode, 0)
         self.assertIn('Preview exceeds', result.stderr)
+    def test_geometry_error_never_returns_partial_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            mesh = pathlib.Path(directory) / 'bad.stl'
+            mesh.write_text('not a valid STL mesh')
+            result = self.compile(f'cube(1); import("{mesh}");')
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, '')
+    def test_long_unicode_diagnostics_remain_valid_utf8(self):
+        for offset in range(3):
+            result = self.compile('echo("' + 'a' * (8185 + offset) + '€€€€€"); cube(1);')
+            self.assertEqual(result.returncode, 0, result.stderr[-300:])
+            scene = json.loads(result.stdout)
+            self.assertTrue(all(len(message.encode('utf8')) <= 8192 for message in scene['diagnostics']))
 if __name__ == '__main__': unittest.main()

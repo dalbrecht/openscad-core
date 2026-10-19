@@ -24,3 +24,8 @@ Tests: `python3 native/tests/test_preview.py build-native/openscad-preview-worke
 Upstream tests and sources are retained unchanged. New boundary coverage is separate
 from legacy engine coverage. Native Apple acceptance and renderer live in
 https://github.com/dalbrecht/openscad-apple .
+
+Error-level parser, evaluation and geometry diagnostics fail the request before
+any scene is written to stdout. Successful warnings remain bounded diagnostics.
+Diagnostic truncation preserves UTF-8 boundaries. Native boundary regressions
+include malformed imports alongside valid geometry and long Unicode echo text.
