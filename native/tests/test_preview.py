@@ -85,4 +85,26 @@ class PreviewTests(unittest.TestCase):
     def test_missing_file_and_usage_return_failure(self):
         self.assertNotEqual(subprocess.run([WORKER],capture_output=True).returncode,0)
         self.assertNotEqual(subprocess.run([WORKER,'/missing/native-model.scad'],capture_output=True).returncode,0)
+    def test_evaluation_error_never_returns_partial_success(self):
+        result = self.compile('cube(1); assert(false); sphere(2);')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, '')
+    def test_reflection_preserves_outward_winding(self):
+        def volume(source):
+            scene = json.loads(self.compile(source).stdout)
+            total = 0
+            for leaf in scene['leaves']:
+                for t in leaf['triangles']:
+                    a,b,c = t[:3],t[3:6],t[6:]
+                    total += sum(a[i]*(b[(i+1)%3]*c[(i+2)%3]-b[(i+2)%3]*c[(i+1)%3]) for i in range(3))/6
+            return total
+        self.assertGreater(volume('cube(2);') * volume('mirror([1,0,0]) cube(2);'), 0)
+    def test_nonfinite_color_is_rejected(self):
+        result = self.compile('color([1e100,0,0]) cube(1);')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, '')
+    def test_deep_union_receives_quota_error_instead_of_stack_failure(self):
+        result = self.compile('for(i=[0:9999]) translate([i*2,0,0]) cube(1);')
+        self.assertGreater(result.returncode, 0)
+        self.assertIn('Preview exceeds', result.stderr)
 if __name__ == '__main__': unittest.main()

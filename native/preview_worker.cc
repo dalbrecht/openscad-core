@@ -28,14 +28,19 @@ constexpr size_t maxSource = 4 * 1024 * 1024;
 constexpr size_t maxTriangles = 100000;
 json leaves = json::array(), nodes = json::array();
 size_t triangleCount = 0;
+size_t traversalCount = 0;
 int encode(const std::shared_ptr<CSGNode>& node)
 {
+  // Count entry, not completed descendants, to bound deep upstream union trees.
+  if (++traversalCount > 255) throw std::runtime_error("Preview exceeds traversal quota");
   if (!node || node->isEmptySet()) return -1;
   if (nodes.size() >= 127) throw std::runtime_error("Preview exceeds 127 CSG nodes");
   if (const auto leaf = std::dynamic_pointer_cast<CSGLeaf>(node)) {
     if (leaves.size() >= 64) throw std::runtime_error("Preview exceeds 64 leaves");
     if (leaf->polyset->getDimension() != 3) throw std::runtime_error("2D preview is not yet supported");
     auto mesh = PolySetUtils::tessellate_faces(*leaf->polyset);
+    if (leaf->matrix.matrix().determinant() < 0)
+      for (auto& face : mesh->indices) std::reverse(face.begin(), face.end());
     json triangles = json::array();
     for (const auto& face : mesh->indices) {
       if (face.size() != 3) throw std::runtime_error("Non-triangular tessellation");
@@ -52,9 +57,12 @@ int encode(const std::shared_ptr<CSGNode>& node)
       triangles.push_back(std::move(triangle));
     }
     json color = json::array();
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 4; ++i) {
+      if (!std::isfinite(leaf->color.toVector4f()[i]))
+        throw std::runtime_error("Non-finite preview color");
       color.push_back(leaf->color.toVector4f()[i] < 0 ? (i == 3 ? 1.0 : (i == 2 ? 0.15 : 0.95))
-                                                      : leaf->color.toVector4f()[i]);
+                                                      : std::min(1.0f, leaf->color.toVector4f()[i]));
+    }
     const int index = leaves.size();
     leaves.push_back({{"triangles", std::move(triangles)}, {"color", color}});
     nodes.push_back({{"op", 0}, {"left", index}, {"right", -1}});
@@ -107,6 +115,7 @@ int main(int argc, char **argv)
     variables.applyToContext(context);
     std::shared_ptr<const FileContext> fileContext;
     auto absoluteRoot = source->instantiate(*context, &fileContext);
+    if (!fileContext) throw std::runtime_error("OpenSCAD evaluation failed");
     const Location *nextLocation = nullptr;
     auto root = find_root_tag(absoluteRoot, &nextLocation);
     if (!root) root = absoluteRoot;
