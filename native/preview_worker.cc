@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // One request per process deliberately isolates upstream parser globals and caches.
 #include <filesystem>
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include "openscad.h"
 #include "core/Builtins.h"
 #include "core/BuiltinContext.h"
@@ -29,20 +31,26 @@ constexpr size_t maxTriangles = 100000;
 json leaves = json::array(), nodes = json::array();
 size_t triangleCount = 0;
 size_t traversalCount = 0;
+std::unordered_map<const CSGNode *, int> encodedNodes;
 struct DiagnosticState {
   std::vector<std::string> messages;
   bool hasError = false;
 };
 int encode(const std::shared_ptr<CSGNode>& node)
 {
-  // Count entry, not completed descendants, to bound deep upstream union trees.
-  if (++traversalCount > 255) throw std::runtime_error("Preview exceeds traversal quota");
   if (!node || node->isEmptySet()) return -1;
+  if (const auto found = encodedNodes.find(node.get()); found != encodedNodes.end()) return found->second;
+  // Count unique entries, not completed descendants or repeated modifier roots.
+  if (++traversalCount > 255) throw std::runtime_error("Preview exceeds traversal quota");
   if (nodes.size() >= 127) throw std::runtime_error("Preview exceeds 127 CSG nodes");
   if (const auto leaf = std::dynamic_pointer_cast<CSGLeaf>(node)) {
     if (leaves.size() >= 64) throw std::runtime_error("Preview exceeds 64 leaves");
     if (leaf->polyset->getDimension() != 3) throw std::runtime_error("2D preview is not yet supported");
     auto mesh = PolySetUtils::tessellate_faces(*leaf->polyset);
+    const bool hasFaceColors = std::any_of(mesh->colors.begin(), mesh->colors.end(),
+      [](const Color4f& color) { return color.isValid(); });
+    if (hasFaceColors && !leaf->color.hasRgb())
+      throw std::runtime_error("Preview protocol v1 cannot represent imported face colors; use an explicit color override");
     if (leaf->matrix.matrix().determinant() < 0)
       for (auto& face : mesh->indices) std::reverse(face.begin(), face.end());
     json triangles = json::array();
@@ -78,7 +86,9 @@ int encode(const std::shared_ptr<CSGNode>& node)
     nodes.push_back({{"op", op}, {"left", left}, {"right", right}});
   } else throw std::runtime_error("Unsupported CSG node");
   if (nodes.size() > 127) throw std::runtime_error("Preview exceeds 127 CSG nodes");
-  return nodes.size() - 1;
+  const int index = nodes.size() - 1;
+  encodedNodes.emplace(node.get(), index);
+  return index;
 }
 }  // namespace
 int main(int argc, char **argv)
@@ -89,7 +99,7 @@ int main(int argc, char **argv)
     const auto snapshot = std::filesystem::absolute(argv[1]);
     if (std::filesystem::file_size(snapshot) > maxSource)
       throw std::runtime_error("Source exceeds 4 MiB");
-    std::ifstream input(snapshot);
+    std::ifstream input(snapshot, std::ios::binary);
     if (!input) throw std::runtime_error("Cannot open source");
     std::string text(maxSource + 1, '\0');
     input.read(text.data(), static_cast<std::streamsize>(text.size()));

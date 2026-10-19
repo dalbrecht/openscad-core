@@ -72,7 +72,7 @@ class PreviewTests(unittest.TestCase):
         self.assertNotEqual(result.returncode,0)
         self.assertIn('triangle quota',result.stderr)
     def test_render_node_remains_upstream_evaluated_geometry(self):
-        result = self.compile('render() difference(){cube(4,center=true);cylinder(h=8,r=1,center=true,$fn=12);}')
+        result = self.compile('color("yellow") render() difference(){cube(4,center=true);cylinder(h=8,r=1,center=true,$fn=12);}')
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertEqual(len(json.loads(result.stdout)['leaves']),1)
     def test_root_and_disable_modifiers_follow_upstream(self):
@@ -120,4 +120,28 @@ class PreviewTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr[-300:])
             scene = json.loads(result.stdout)
             self.assertTrue(all(len(message.encode('utf8')) <= 8192 for message in scene['diagnostics']))
+    def test_colored_import_fails_explicitly_without_color_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            mesh = pathlib.Path(directory) / 'colored.off'
+            mesh.write_text('OFF\n4 4 0\n0 0 0\n1 0 0\n0 1 0\n0 0 1\n3 0 2 1 255 0 0\n3 0 1 3 0 255 0\n3 0 3 2 0 0 255\n3 1 2 3 255 255 0\n')
+            result = self.compile(f'import("{mesh}");')
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('face colors', result.stderr)
+            override = self.compile(f'color("red") import("{mesh}");')
+            self.assertEqual(override.returncode, 0, override.stderr)
+    def test_highlight_reuses_main_scene_nodes_and_quota(self):
+        result = self.compile('#union(){for(i=[0:32]) translate([i*2,0,0]) cube(1);}')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        scene = json.loads(result.stdout)
+        self.assertEqual(len(scene['leaves']),33)
+        self.assertEqual(scene['root'],scene['highlights'][0])
+    def test_control_z_cannot_hide_nul_suffix(self):
+        result = self.compile('cube(1);\x1a\0sphere(2);')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, '')
+    def test_render_materials_require_explicit_override_until_protocol_v2(self):
+        result = self.compile('render() difference(){cube(4,center=true);cylinder(h=8,r=1,center=true,$fn=12);}')
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('face colors',result.stderr)
+        self.assertEqual(result.stdout,'')
 if __name__ == '__main__': unittest.main()

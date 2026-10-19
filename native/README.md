@@ -29,3 +29,9 @@ Error-level parser, evaluation and geometry diagnostics fail the request before
 any scene is written to stdout. Successful warnings remain bounded diagnostics.
 Diagnostic truncation preserves UTF-8 boundaries. Native boundary regressions
 include malformed imports alongside valid geometry and long Unicode echo text.
+
+Protocol v1 cannot encode actual per-face materials from imports or evaluated
+render() meshes. It fails explicitly instead of silently replacing those colors.
+An explicit uniform color() override remains representable. Material protocol
+work is tracked in #3. Shared modifier nodes reuse indices and quotas; snapshots
+are read as bytes on every platform. The native target explicitly requires C++20.
